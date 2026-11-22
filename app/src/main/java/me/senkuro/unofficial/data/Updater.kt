@@ -45,11 +45,11 @@ sealed interface UpdateState {
 }
 
 /**
- * Обновление «по воздуху» из GitHub Releases репозитория ilyakuchka/Cql: проверка последнего релиза,
+ * Обновление «по воздуху» из GitHub Releases репозитория kuchkaapp/1141: проверка последнего релиза,
  * скачивание APK и установка через PackageInstaller. Тег релиза: v<версия>-c<versionCode>-build<N>.
  */
 object Updater {
-    private const val REPO = "ilyakuchka/Cql"
+    private const val REPO = "kuchkaapp/1141"
     private const val CHECK_EVERY_MS = 6L * 60 * 60 * 1000
     private const val ACTION = "me.senkuro.unofficial.UPDATE_STATUS"
 
