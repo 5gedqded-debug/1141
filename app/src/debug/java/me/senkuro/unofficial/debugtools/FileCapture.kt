@@ -1,0 +1,394 @@
+package me.senkuro.unofficial.debugtools
+
+import android.os.Handler
+import android.os.Looper
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import androidx.compose.runtime.mutableStateListOf
+import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import java.io.ByteArrayInputStream
+import java.io.OutputStream
+import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+
+class CapturedFile(
+    val url: String,
+    val mime: String,
+    val size: Int,
+    val time: Long,
+    val status: Int,
+    /** Имя для сохранения: host/путь без недопустимых символов. */
+    val name: String,
+)
+
+/**
+ * Перехват статических файлов сайта (js, css, json, карты, шрифты и т.п.) во встроенном браузере.
+ * Файл скачивается самим приложением (shouldInterceptRequest) и отдаётся странице как есть,
+ * поэтому содержимое доступно для сохранения. Только debug-сборка.
+ * Не трогаем: API-хосты, запросы с Authorization, адреса с секретными параметрами, html-страницы, картинки.
+ */
+object FileCapture {
+
+    val files = mutableStateListOf<CapturedFile>()
+
+    private val contents = ConcurrentHashMap<String, ByteArray>()
+    private val seen = ConcurrentHashMap.newKeySet<String>()
+    private val main = Handler(Looper.getMainLooper())
+    private val client = OkHttpClient.Builder().followRedirects(true).followSslRedirects(true).build()
+
+    @Volatile
+    private var total = 0L
+
+    private val allowedExt = setOf(
+        "js", "mjs", "cjs", "css", "json", "map", "webmanifest", "txt", "xml", "svg",
+        "wasm", "woff", "woff2", "ttf", "otf", "ico",
+    )
+    /** Дополнительно для «Подгрузить все файлы»: картинки, видео, звук. */
+    private val mediaExt = setOf("png", "jpg", "jpeg", "webp", "avif", "gif", "webm", "mp4", "mp3", "ogg")
+    private val secretQuery = Regex("(^|[?&])(code|state|token|access_token|sig|signature|key|jwt|sid|ticket)=", RegexOption.IGNORE_CASE)
+
+    private const val MAX_FILE = 10 * 1024 * 1024
+    private const val MAX_TOTAL = 80L * 1024 * 1024
+
+    private fun ext(url: String): String =
+        runCatching { URI(url).path.orEmpty().substringAfterLast('/').substringAfterLast('.', "").lowercase() }.getOrDefault("")
+
+    private fun ownStatic(url: String, media: Boolean = false): Boolean = runCatching {
+        val uri = URI(url)
+        val host = uri.host.orEmpty()
+        uri.scheme == "https" &&
+            Regex("senkuro|shiruho|senkognito", RegexOption.IGNORE_CASE).containsMatchIn(host) &&
+            !host.startsWith("api.") && !uri.path.orEmpty().contains("/graphql") &&
+            (ext(url) in allowedExt || (media && ext(url) in mediaExt)) && !secretQuery.containsMatchIn(uri.rawQuery?.let { "?$it" }.orEmpty())
+    }.getOrDefault(false)
+
+    /** Вызывается из shouldInterceptRequest (фоновый поток). null — пусть WebView грузит сам. */
+    fun intercept(request: WebResourceRequest): WebResourceResponse? {
+        val url = request.url.toString().substringBefore('#')
+        if (!request.method.equals("GET", true) || !ownStatic(url)) return null
+        if (request.requestHeaders.keys.any { it.equals("Authorization", true) }) return null
+        if (total >= MAX_TOTAL && !seen.contains(url)) return null
+        return try {
+            val builder = Request.Builder().url(url)
+            request.requestHeaders.forEach { (k, v) ->
+                // Accept-Encoding не пробрасываем: OkHttp сам запросит gzip и распакует ответ.
+                if (!k.equals("Accept-Encoding", true) && !k.equals("Range", true)) builder.header(k, v)
+            }
+            CookieManager.getInstance().getCookie(url)?.let { builder.header("Cookie", it) }
+            client.newCall(builder.build()).execute().use { response ->
+                val body = response.body ?: return null
+                if (body.contentLength() > MAX_FILE) return null
+                val bytes = body.bytes()
+                if (bytes.size > MAX_FILE) return null
+                val contentType = response.header("Content-Type").orEmpty()
+                val mime = contentType.substringBefore(';').trim().ifBlank { "application/octet-stream" }
+                val charset = Regex("charset=([^;\\s]+)", RegexOption.IGNORE_CASE).find(contentType)?.groupValues?.get(1)
+                record(url, mime, bytes, response.code)
+                val skip = setOf("content-encoding", "content-length", "transfer-encoding", "content-type", "set-cookie")
+                val headers = response.headers.names()
+                    .filterNot { it.lowercase() in skip }
+                    .associateWith { response.header(it).orEmpty() }
+                WebResourceResponse(
+                    mime, charset, response.code,
+                    response.message.ifBlank { "OK" }, headers, ByteArrayInputStream(bytes),
+                )
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Скачивает файл без участия WebView (для загрузки по манифесту). true — файл сохранён. */
+    fun fetchDirect(url: String, media: Boolean = false): Boolean {
+        if (seen.contains(url) || !ownStatic(url, media)) return seen.contains(url)
+        if (total >= MAX_TOTAL) return false
+        return try {
+            val request = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36").build()
+            client.newCall(request).execute().use { response ->
+                val body = response.body ?: return false
+                if (body.contentLength() > MAX_FILE) return false
+                val bytes = body.bytes()
+                if (bytes.size > MAX_FILE) return false
+                val mime = response.header("Content-Type").orEmpty().substringBefore(';').trim().ifBlank { "application/octet-stream" }
+                record(url, mime, bytes, response.code)
+                response.code in 200..299
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Адреса js из precache-манифеста service worker (vite-plugin-pwa: url:"assets/x.js").
+     * Сначала файлы, похожие на слой запросов (graphql/api/query), чтобы они не упёрлись в лимит размера.
+     */
+    fun manifestUrls(swText: String, swUrl: String): List<String> {
+        val base = URI(swUrl)
+        val all = Regex("""url:"([^"]+\.js)"""").findAll(swText).map { it.groupValues[1] }.distinct().toList()
+        val priority = Regex("graphql|api|query|queries|gql|manga|user|bookmark|comment|chapter|guild|conversation|card|collection|modal|_slug_|_namespace_", RegexOption.IGNORE_CASE)
+        return all.sortedBy { if (priority.containsMatchIn(it)) 0 else 1 }
+            .mapNotNull { runCatching { base.resolve(it).toString() }.getOrNull() }
+    }
+
+    private val refRegex = Regex("""["'`(]((?:\.{1,2}/|/|assets/)?[A-Za-z0-9_@.\-/]+\.(?:js|mjs|css|json|webmanifest|svg|wasm|woff2?|ttf|otf|ico|png|jpe?g|webp|avif|gif|webm|mp4|mp3|ogg))(?:\?[^"'`)\s]*)?["'`)]""")
+
+    /** Адреса всех файлов, упомянутых в тексте файла [fileUrl] (js, css, json, html): import("./x.js"), mapDeps, url(...), "/assets/x.webp". */
+    fun referencedUrls(text: String, fileUrl: String): List<String> {
+        val base = runCatching { URI(fileUrl) }.getOrNull() ?: return emptyList()
+        val root = URI(base.scheme + "://" + base.authority + "/")
+        return refRegex.findAll(text).mapNotNull { m ->
+            val ref = m.groupValues[1]
+            // /src/... — исходники, на сайте не раздаются; node_modules — тоже.
+            if (ref.startsWith("/src/") || ref.contains("node_modules") || ref.startsWith("//")) return@mapNotNull null
+            val resolved = when {
+                ref.startsWith("./") || ref.startsWith("../") -> base.resolve(ref)
+                ref.startsWith("/") -> root.resolve(ref.removePrefix("/"))
+                ref.startsWith("assets/") -> root.resolve(ref)
+                else -> return@mapNotNull null
+            }
+            resolved.toString().substringBefore('#')
+        }.distinct().toList()
+    }
+
+    /** Файлы, по которым имеет смысл искать ссылки. */
+    private fun scannable(f: CapturedFile) = ext(f.url) in setOf("js", "mjs", "css", "json", "webmanifest")
+
+    /**
+     * Полный обход: precache-манифест sw.js (все типы файлов), затем ссылки внутри уже скачанных файлов,
+     * пока появляются новые. [onProgress] — «сделано / всего»; возвращает число скачанных новых файлов.
+     */
+    fun crawlAll(onProgress: (Int, Int) -> Unit): Int {
+        val tried = HashSet<String>()
+        val scanned = HashSet<String>()
+        var fetched = 0
+        var round = 0
+        val gate = java.util.concurrent.Semaphore(6)
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(6)
+        try {
+            // sw.js: все url:"..." (не только js)
+            val swUrl = swFile()?.url ?: (me.senkuro.unofficial.data.SenkuroConfig.BASE_URL.trimEnd('/') + "/sw.js")
+            if (swFile() == null) fetchDirect(swUrl)
+            val queue = LinkedHashSet<String>()
+            swFile()?.let { textOf(it) }?.let { sw ->
+                val b = URI(swUrl)
+                Regex("""url:"([^"]+)"""").findAll(sw).forEach { m ->
+                    runCatching { b.resolve(m.groupValues[1]).toString() }.getOrNull()?.let { queue.add(it) }
+                }
+            }
+            while (round++ < 8) {
+                // ссылки из ещё не просмотренных файлов
+                files.toList().filter { scannable(it) && scanned.add(it.url) }.forEach { f ->
+                    textOf(f)?.let { referencedUrls(it, f.url).forEach { u -> queue.add(u) } }
+                }
+                val todo = queue.filter { it !in tried && it !in seen }
+                tried.addAll(todo)
+                if (todo.isEmpty()) break
+                var done = 0
+                val total = tried.size
+                val futures = todo.map { u ->
+                    pool.submit<Boolean> {
+                        gate.acquire()
+                        try { fetchDirect(u, media = true) } finally {
+                            gate.release()
+                            synchronized(this) { done++; onProgress(tried.size - todo.size + done, total) }
+                        }
+                    }
+                }
+                futures.forEach { if (runCatching { it.get() }.getOrDefault(false)) fetched++ }
+            }
+        } finally {
+            pool.shutdown()
+        }
+        return fetched
+    }
+
+    private const val INTROSPECTION = "query IntrospectionQuery { __schema { queryType { name } mutationType { name } subscriptionType { name } " +
+        "types { kind name description fields(includeDeprecated: true) { name description args { name description defaultValue type { ...TypeRef } } type { ...TypeRef } isDeprecated } " +
+        "inputFields { name description defaultValue type { ...TypeRef } } interfaces { ...TypeRef } enumValues(includeDeprecated: true) { name description isDeprecated } possibleTypes { ...TypeRef } } } } " +
+        "fragment TypeRef on __Type { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } } } }"
+
+    /** Стандартный introspection-запрос к публичному API (без авторизации); возвращает JSON-ответ как есть. */
+    fun introspect(apiUrl: String): ByteArray {
+        val body = org.json.JSONObject().put("query", INTROSPECTION).put("operationName", "IntrospectionQuery").toString()
+        val req = Request.Builder().url(apiUrl).header("User-Agent", me.senkuro.unofficial.data.SenkuroConfig.USER_AGENT)
+            .post(okhttp3.RequestBody.create("application/json".toMediaType(), body)).build()
+        client.newCall(req).execute().use { r ->
+            if (!r.isSuccessful) error("HTTP ${r.code}")
+            return r.body?.bytes() ?: error("пустой ответ")
+        }
+    }
+
+    private const val SCHEMA_MARKER = "__schema:JSON.parse(`"
+
+    /** Схема, зашитая в js сайта (кэш urql: {__schema:JSON.parse(`...`)}); ищем в уже загруженных index-*.js. */
+    private fun embeddedSchemaJson(): String? {
+        for (f in files.toList()) {
+            if (!f.url.substringAfterLast('/').startsWith("index-") || !f.url.endsWith(".js")) continue
+            val text = textOf(f) ?: continue
+            val start = text.indexOf(SCHEMA_MARKER).takeIf { it >= 0 } ?: continue
+            val from = start + SCHEMA_MARKER.length
+            val end = text.indexOf("`)", from).takeIf { it > from } ?: continue
+            return text.substring(from, end)
+        }
+        return null
+    }
+
+    /**
+     * Схема GraphQL. Сервер отключил introspection (отвечает {"__schema":null}), поэтому при пустом ответе
+     * берём схему, встроенную в js сайта (типы, поля, аргументы, union/interface; enum и input-типов там нет).
+     */
+    fun schemaForced(apiUrl: String): Pair<ByteArray, String> {
+        val live = runCatching { introspect(apiUrl) }.getOrNull()
+        if (live != null) {
+            val ok = runCatching {
+                !org.json.JSONObject(live.toString(Charsets.UTF_8)).getJSONObject("data").isNull("__schema")
+            }.getOrDefault(false)
+            if (ok) return live to "с сервера"
+        }
+        var json = embeddedSchemaJson()
+        if (json == null) {
+            // js ещё не загружен: берём index-*.js из манифеста sw.js
+            val swUrl = swFile()?.url ?: (me.senkuro.unofficial.data.SenkuroConfig.BASE_URL.trimEnd('/') + "/sw.js")
+            if (swFile() == null) fetchDirect(swUrl)
+            val sw = swFile()?.let { textOf(it) }
+            if (sw != null) {
+                manifestUrls(sw, swUrl).filter { it.substringAfterLast('/').startsWith("index-") }.forEach { u ->
+                    if (json == null) { fetchDirect(u); json = embeddedSchemaJson() }
+                }
+            }
+        }
+        val schema = json ?: error("introspection отключён, а схема в js сайта не найдена")
+        val out = """{"data":{"__schema":$schema},"extensions":{"source":"embedded-in-site-js","note":"introspection на сервере отключён; enum и input-типов в этой схеме нет"}}"""
+        return out.toByteArray() to "из js сайта"
+    }
+
+    fun swFile(): CapturedFile? = files.firstOrNull { it.name.endsWith("/sw.js") || it.name == "sw.js" }
+
+    private fun record(url: String, mime: String, bytes: ByteArray, status: Int) {
+        if (status !in 200..299 || !seen.add(url)) return
+        contents[url] = bytes
+        total += bytes.size
+        val file = CapturedFile(url, mime, bytes.size, System.currentTimeMillis(), status, nameOf(url))
+        main.post { files.add(0, file) }
+    }
+
+    private fun nameOf(url: String): String {
+        val uri = URI(url)
+        val path = uri.path.orEmpty().trim('/').ifBlank { "index" }
+        val q = uri.rawQuery?.takeIf { it.isNotBlank() }?.let { "_" + Integer.toHexString(it.hashCode()) }.orEmpty()
+        val base = (uri.host.orEmpty() + "/" + path).replace(Regex("[^A-Za-z0-9._/-]"), "_")
+        val dot = base.lastIndexOf('.')
+        return if (q.isEmpty()) base else if (dot > base.lastIndexOf('/')) base.substring(0, dot) + q + base.substring(dot) else base + q
+    }
+
+    fun bytesOf(file: CapturedFile): ByteArray? = contents[file.url]
+
+    fun textOf(file: CapturedFile): String? = contents[file.url]?.toString(Charsets.UTF_8)
+
+    fun clear() {
+        files.clear()
+        contents.clear()
+        seen.clear()
+        total = 0
+    }
+
+    fun totalBytes(): Long = total
+
+    /** Все файлы одним ZIP; extra — дополнительные текстовые файлы (например, найденные GraphQL-запросы). */
+    fun writeZip(out: OutputStream, extra: Map<String, String> = emptyMap()) {
+        ZipOutputStream(out).use { zip ->
+            val used = HashSet<String>()
+            files.toList().forEach { f ->
+                val bytes = contents[f.url] ?: return@forEach
+                var name = f.name
+                var i = 1
+                while (!used.add(name)) name = f.name + "_" + i++
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+            extra.forEach { (name, text) ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(text.toByteArray())
+                zip.closeEntry()
+            }
+            zip.putNextEntry(ZipEntry("_urls.txt"))
+            zip.write(files.toList().joinToString("\n") { "${it.status} ${it.mime} ${it.size} ${it.url}" }.toByteArray())
+            zip.closeEntry()
+        }
+    }
+}
+
+/** Достаёт GraphQL-документы (query/mutation/subscription/fragment) из текстов js-бандлов. */
+object GqlScanner {
+    class Found(val kind: String, val name: String, val text: String, val source: String)
+
+    private val head = Regex("""\b(query|mutation|subscription|fragment)\s+([A-Za-z_]\w*)\s*(\([^()]*\))?\s*(on\s+\w+\s*)?\{""")
+
+    private val ast = Regex("""operation:`(query|mutation|subscription)`,name:\{kind:`Name`,value:`([A-Za-z_]\w*)`""")
+    private val inputCall = Regex("""input:\{([^{}]{3,260})\}""")
+
+    fun scan(files: List<CapturedFile>): List<Found> {
+        val result = LinkedHashMap<String, Found>()
+        files.filter { it.name.endsWith(".js") || it.name.endsWith(".mjs") || it.name.endsWith(".json") || it.name.endsWith(".map") }
+            .forEach { f ->
+                val text = FileCapture.textOf(f) ?: return@forEach
+                head.findAll(text).forEach { m ->
+                    val open = m.range.last
+                    var depth = 0
+                    var end = -1
+                    var i = open
+                    val limit = minOf(text.length, open + 60_000)
+                    while (i < limit) {
+                        when (text[i]) {
+                            '{' -> depth++
+                            '}' -> { depth--; if (depth == 0) { end = i; break } }
+                        }
+                        i++
+                    }
+                    if (end < 0) return@forEach
+                    val raw = text.substring(m.range.first, end + 1)
+                    val clean = raw.replace("\\n", "\n").replace("\\\"", "\"").replace(Regex("\\$\\{[^}]*}"), "").trim()
+                    // Отсеиваем случайные совпадения: в документе должны быть поля.
+                    if (clean.count { it == '\n' } < 1 && clean.length < 40) return@forEach
+                    val key = m.groupValues[1] + " " + m.groupValues[2]
+                    val old = result[key]
+                    if (old == null || clean.length > old.text.length) result[key] = Found(m.groupValues[1], m.groupValues[2], clean, f.name)
+                }
+                // Сайт хранит запросы как AST-объекты, а не строки: ищем имена операций в таком виде.
+                ast.findAll(text).forEach { m ->
+                    val key = m.groupValues[1] + " " + m.groupValues[2]
+                    if (key !in result) result[key] = Found(m.groupValues[1], m.groupValues[2], "(AST-документ, текст запроса в js не строкой)", f.name)
+                }
+                // Формы входа мутаций: вызовы вида ({input:{a:b,c:d}}) — единственный источник полей input.
+                inputCall.findAll(text).forEach { m ->
+                    val shape = m.groupValues[1].replace(Regex("\\s+"), " ")
+                    val key = "input " + f.name + " " + shape
+                    if (key !in result) result[key] = Found("input", f.name, "input:{$shape}", f.name)
+                }
+            }
+        return result.values.toList()
+    }
+
+    fun render(found: List<Found>, hideNames: Set<String>): String = buildString {
+        val inputs = found.filter { it.kind == "input" }
+        val shown = found.filter { it.kind != "input" && (it.kind == "fragment" || it.name !in hideNames) }
+        appendLine("# GraphQL, найденный в js сайта: ${found.size} всего, показано ${shown.size}")
+        appendLine("# (реализованные в приложении операции скрыты; фрагменты показаны все)")
+        appendLine()
+        shown.forEach {
+            appendLine("## ${it.kind} ${it.name}   [${it.source}]")
+            appendLine(it.text)
+            appendLine()
+        }
+        if (inputs.isNotEmpty()) {
+            appendLine("# Формы input мутаций (вызовы в js): ${inputs.size}")
+            inputs.forEach { appendLine("${it.source}: ${it.text}") }
+        }
+    }
+}

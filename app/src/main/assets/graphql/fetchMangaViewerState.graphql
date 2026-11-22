@@ -1,0 +1,7 @@
+query fetchMangaViewerState($slug: String!) {
+  manga(slug: $slug) {
+    id
+    viewerVote
+    viewerBookmark { number page collectionId }
+  }
+}

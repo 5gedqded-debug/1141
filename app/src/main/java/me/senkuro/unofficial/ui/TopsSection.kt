@@ -1,0 +1,221 @@
+package me.senkuro.unofficial.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
+import me.senkuro.unofficial.data.AppGraph
+import me.senkuro.unofficial.data.TopUser
+
+private const val CREDITS = "credits"
+private const val EXPERIENCE = "experience"
+
+private val numberFormat get() = java.text.NumberFormat.getIntegerInstance(java.util.Locale("ru"))
+
+/**
+ * «Топ пользователей» как на сайте: вкладки «Пополнение» / «Опыт», подпись, «Ты набрал/пополнил», карточки
+ * (место, аватар с рамкой, имя со статусом, тег уровня, гильдия или опыт).
+ * Данные грузит HomeViewModel заранее, параллельно главной; вторая вкладка — по требованию и кэшируется.
+ */
+@Composable
+fun TopsSection(vm: HomeViewModel, onTasks: () -> Unit, onUser: (String) -> Unit = {}) {
+    val account by AppGraph.account.collectAsState()
+    val tab = vm.topsTab
+    val data = vm.topsData[tab]
+    val experience = tab == EXPERIENCE
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            "Топ пользователей",
+            style = HeadingStyle,
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                SegmentTab("Пополнение", tab == CREDITS) { vm.selectTopsTab(CREDITS) }
+                SegmentTab("Опыт", experience) { vm.selectTopsTab(EXPERIENCE) }
+            }
+            Spacer(Modifier.weight(1f))
+            if (account != null && experience) {
+                Text(
+                    "К заданиям",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onTasks).padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+        }
+        Text(
+            if (experience) "Больше опыта за 24 часа — выше место." else "Больше купленных этерий — выше место.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+        if (account != null && data != null) {
+            Text(
+                (if (experience) "Ты набрал · " else "Ты пополнил · ") + numberFormat.format(data.viewerValue),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.padding(horizontal = 12.dp).streamerBlur(),
+            )
+        }
+        when {
+            data != null -> LazyRow(
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                itemsIndexed(data.users, key = { _, u -> u.id }) { index, user ->
+                    TopCard(rank = index + 1, user = user, experience = experience, mine = isMe(user.slug, user.id), onClick = { user.slug?.let(onUser) })
+                }
+            }
+            tab in vm.topsFailed -> Text(
+                "Не удалось загрузить · Повторить",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp).clickable { vm.loadTops(tab, force = true) },
+            )
+            else -> LazyRow(
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(count = 6, key = { "ph-$it" }) {
+                    Box(Modifier.width(128.dp).height(152.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SegmentTab(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        fontSize = 13.sp,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+    )
+}
+
+@Composable
+private fun TopCard(rank: Int, user: TopUser, experience: Boolean, mine: Boolean = false, onClick: () -> Unit = {}) {
+    val accent: Color? = when (rank) {
+        1 -> Color(0xFFFFD043)
+        2 -> Color(0xFF5177FF)
+        3 -> Color(0xFFF1F1F1).copy(alpha = 0.8f)
+        else -> null
+    }
+    Box(
+        Modifier
+            .width(128.dp)
+            .height(152.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .then(
+                if (accent != null) Modifier.background(Brush.horizontalGradient(listOf(accent.copy(alpha = 0.5f), accent.copy(alpha = 0.05f), accent.copy(alpha = 0.5f))))
+                else Modifier,
+            )
+            .padding(1.dp),
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(11.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Box(Modifier.size(48.dp).streamerBlur(mine, 16.dp), contentAlignment = Alignment.Center) {
+                AsyncImage(
+                    model = user.avatar,
+                    contentDescription = user.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface),
+                )
+                if (user.frame != null) {
+                    AsyncImage(model = user.frame, contentDescription = null, modifier = Modifier.fillMaxSize())
+                }
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        user.name,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f, fill = false).streamerBlur(mine),
+                    )
+                    if (user.status != null) AsyncImage(model = user.status, contentDescription = null, modifier = Modifier.size(16.dp))
+                }
+                if (user.level != null) Box(Modifier.streamerBlur(mine, 6.dp)) { LevelTag(user.level, onClick = if (mine) LocalOpenLevels.current else null) }
+                if (experience) {
+                    Text(
+                        (user.experience?.let { numberFormat.format(it) } ?: "0") + " XP",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.streamerBlur(mine, 6.dp),
+                    )
+                } else if (!user.guild.isNullOrBlank()) {
+                    Text(
+                        user.guild,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = parseColor(user.guildColor) ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        Text(
+            rank.toString(),
+            color = accent ?: MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.align(Alignment.TopStart).padding(start = 10.dp, top = 8.dp),
+        )
+    }
+}
+
+private fun parseColor(value: String?): Color? =
+    value?.takeIf { it.startsWith("#") }?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() }

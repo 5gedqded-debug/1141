@@ -1,0 +1,338 @@
+package me.senkuro.unofficial.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import coil3.compose.AsyncImage
+import me.senkuro.unofficial.data.AppGraph
+import me.senkuro.unofficial.data.MangaItem
+import me.senkuro.unofficial.data.SenkuroConfig
+import me.senkuro.unofficial.data.UserBalance
+import java.util.Calendar
+
+@Composable
+fun HomeScreen(
+    onManga: (MangaItem) -> Unit,
+    onSearch: () -> Unit,
+    onMore: () -> Unit,
+    onLogin: () -> Unit,
+    onProfile: () -> Unit,
+    onNotifications: () -> Unit,
+    onTasks: () -> Unit = {},
+    onUser: (String) -> Unit = {},
+    vm: HomeViewModel = viewModel(),
+) {
+    Column(Modifier.fillMaxSize()) {
+        HomeHeader(onSearch = onSearch, onRefresh = vm::load, onLogin = onLogin, onProfile = onProfile, onNotifications = onNotifications)
+        when (val state = vm.state) {
+            is UiState.Loading -> LoadingBox()
+            is UiState.Error -> ErrorBox(state.message, vm::load)
+            is UiState.Ready -> {
+                val account by AppGraph.account.collectAsState()
+                var resume by remember { mutableStateOf<List<MangaItem>>(emptyList()) }
+                LaunchedEffect(account?.userId) {
+                    resume = if (account == null) emptyList() else try {
+                        AppGraph.repository.continueReading()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(top = 4.dp, bottom = 16.dp + LocalBottomInset.current),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    val data = state.data
+                    item(key = "tops") { TopsSection(vm, onTasks, onUser) }
+                    cardsSection("Продолжить чтение", resume, onManga, onMore, showMore = false)
+                    trendingSection(
+                        "Самое читаемое",
+                        if (vm.popularPeriod == "DAY") data.popular else vm.popularOther.orEmpty(),
+                        onManga,
+                        header = { PeriodTabs(vm.popularPeriod, vm.popularLoading, vm::selectPopularPeriod) },
+                    )
+                    item(key = "ad") { AdStrip() }
+                    cardsSection("Новые тайтлы", data.newTitles, onManga, onMore)
+                    newChaptersSection("Новые главы", data.latest.take(10), onManga, onMore)
+                    cardsSection("Рекомендации", data.recommendations, onManga, onMore)
+                }
+            }
+        }
+    }
+}
+
+private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+    in 5..11 -> "Доброе утро"
+    in 12..17 -> "Добрый день"
+    in 18..22 -> "Добрый вечер"
+    else -> "Доброй ночи"
+}
+
+/** Шапка как «Banner» в ките: белая полоса с нижней линией #E0E0E0, слева аватар и приветствие, справа иконки. */
+@Composable
+private fun HomeHeader(onSearch: () -> Unit, onRefresh: () -> Unit, onLogin: () -> Unit, onProfile: () -> Unit, onNotifications: () -> Unit) {
+    val unread by AppGraph.unread.collectAsState()
+    val account by AppGraph.account.collectAsState()
+    val token by AppGraph.auth.token.collectAsState()
+    val line = MaterialTheme.colorScheme.outline
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .drawBehind {
+                val y = size.height - 0.4.dp.toPx()
+                drawLine(line, Offset(0f, y), Offset(size.width, y), strokeWidth = 0.8.dp.toPx())
+            }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val headerAvatar = account?.avatar
+        val headerFrame = account?.frame
+        if (headerAvatar != null && headerFrame != null) {
+            AvatarWithFrame(headerAvatar, headerFrame, 40.dp, Modifier.streamerBlur(radius = 12.dp).clickable { if (token == null) onLogin() else onProfile() })
+        } else Box(
+            modifier = Modifier
+                .size(40.dp)
+                .streamerBlur(hide = headerAvatar != null, radius = 12.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .border(0.8.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                .clickable { if (token == null) onLogin() else onProfile() },
+            contentAlignment = Alignment.Center,
+        ) {
+            val avatar = account?.avatar
+            if (avatar != null) {
+                AsyncImage(
+                    model = avatar,
+                    contentDescription = "Профиль",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(Icons.Filled.Person, contentDescription = "Войти", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            val userName = account?.name?.takeIf { it.isNotBlank() }
+            if (userName != null) {
+                // Приветствие остаётся читаемым, размывается только ник.
+                Row {
+                    Text("${greeting()}, ", maxLines = 1, color = MaterialTheme.colorScheme.onBackground, style = HeadingStyle)
+                    Text(
+                        userName,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        style = HeadingStyle,
+                        modifier = Modifier.weight(1f, fill = false).streamerBlur(),
+                    )
+                }
+            } else Text(
+                greeting(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onBackground,
+                style = HeadingStyle,
+            )
+            var balance by remember(account?.userId) { mutableStateOf<UserBalance?>(null) }
+            LaunchedEffect(account?.userId) {
+                if (account != null) balance = AppGraph.repository.balance()
+            }
+            val b = balance
+            if (account != null && b != null) {
+                // Размываются только числа: кредиты, очки и уровень.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    StreamerStat("Эстерии ", fmt(b.credits), hide = true, fontSize = 11.sp)
+                    Text(" · ", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1)
+                    StreamerStat("Коины ", fmt(b.points), hide = true, fontSize = 11.sp)
+                    b.level?.let {
+                        Text(" · ", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1)
+                        val openLevels = LocalOpenLevels.current
+                        Box(Modifier.clickable { openLevels?.invoke() }) {
+                            StreamerStat("Ур. ", it.toString(), hide = true, fontSize = 11.sp, color = levelColor(it))
+                        }
+                    }
+                }
+            } else Text(
+                SenkuroConfig.current.title,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onSearch) { Icon(Icons.Filled.Search, contentDescription = "Поиск", tint = MaterialTheme.colorScheme.onBackground) }
+        IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, contentDescription = "Обновить", tint = MaterialTheme.colorScheme.onBackground) }
+    }
+}
+
+@Composable
+private fun SectionHeader(title: String, onMore: (() -> Unit)?) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(title, style = HeadingStyle, color = MaterialTheme.colorScheme.onBackground)
+        if (onMore != null) {
+            Text(
+                text = "Ещё",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable(onClick = onMore)
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+            )
+        }
+    }
+}
+
+/** Вкладки периода «Самого читаемого»: За день / За неделю / За месяц (как на сайте). */
+@Composable
+private fun PeriodTabs(selected: String, loading: Boolean, onSelect: (String) -> Unit) {
+    Row(
+        Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        listOf("DAY" to "За день", "WEEK" to "За неделю", "MONTH" to "За месяц").forEach { (key, label) ->
+            val on = key == selected
+            Text(
+                text = label,
+                fontSize = 13.sp,
+                color = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { onSelect(key) }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+        if (loading) androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+    }
+}
+
+/** «Trending Series»: пронумерованные строки по три в колонке, колонки листаются вбок. */
+private fun LazyListScope.trendingSection(
+    title: String,
+    list: List<MangaItem>,
+    onManga: (MangaItem) -> Unit,
+    header: (@Composable () -> Unit)? = null,
+) {
+    if (list.isEmpty() && header == null) return
+    item(key = "trending-$title") {
+        Column {
+            SectionHeader(title, onMore = null)
+            header?.invoke()
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(17.dp),
+            ) {
+                val columns = list.chunked(3)
+                items(columns.size) { column ->
+                    Column(Modifier.width(246.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        columns[column].forEachIndexed { row, manga ->
+                            TrendingRow(rank = column * 3 + row + 1, item = manga, onClick = { onManga(manga) })
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun LazyListScope.cardsSection(
+    title: String,
+    list: List<MangaItem>,
+    onManga: (MangaItem) -> Unit,
+    onMore: () -> Unit,
+    showMore: Boolean = true,
+) {
+    if (list.isEmpty()) return
+    item(key = "section-$title") {
+        Column {
+            SectionHeader(title, onMore = if (showMore) onMore else null)
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(list, key = { it.id }) { manga ->
+                    MangaCard(manga, onClick = { onManga(manga) }, modifier = Modifier.width(120.dp))
+                }
+            }
+        }
+    }
+}
+
+/** Лента новых глав: список из 10 тайтлов с последними обновлениями. */
+private fun LazyListScope.newChaptersSection(title: String, list: List<MangaItem>, onManga: (MangaItem) -> Unit, onMore: () -> Unit) {
+    if (list.isEmpty()) return
+    item(key = "section-$title") {
+        Column {
+            SectionHeader(title, onMore = onMore)
+            Column(Modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                list.forEach { manga ->
+                    Row(Modifier.fillMaxWidth().clickable { onManga(manga) }, verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(width = 44.dp, height = 60.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                            AsyncImage(model = manga.cover, contentDescription = manga.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        }
+                        Column(Modifier.padding(start = 12.dp)) {
+                            Text(manga.title, color = MaterialTheme.colorScheme.onBackground, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            val meta = listOfNotNull(manga.status, manga.age).joinToString(" · ")
+                            if (meta.isNotBlank()) Text(meta.uppercase(), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun fmt(n: Long): String = "%,d".format(n).replace(',', ' ')

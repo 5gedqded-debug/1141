@@ -1,0 +1,92 @@
+name: Set version
+
+# Только ручной запуск (Actions → Set version → Run workflow).
+# Меняет versionName и/или versionCode в app/build.gradle.kts и коммитит в ветку запуска.
+# Ничего не собирает и не публикует (ни артефактов, ни релизов).
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: "Версия приложения (versionName). В поле — текущая; измените её"
+        type: string
+        required: false
+        default: "0.1.7-alpha" # cur-name
+      version_code:
+        description: "Номер сборки (versionCode). В поле — текущий; измените его"
+        type: string
+        required: false
+        default: "10" # cur-code
+      bump_code:
+        description: "Номер сборки +1 от текущего (если поле выше не менялось или пустое)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  set-version:
+    runs-on: ubuntu-24.04
+    steps:
+      # Если в секретах есть WORKFLOW_PAT (токен с правами repo и workflow), workflow сам обновляет
+      # значения по умолчанию в окне запуска. Без него пользуется обычный токен и значения в окне не меняются.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.WORKFLOW_PAT || github.token }}
+
+      - name: Read current version
+        id: cur
+        run: |
+          f=app/build.gradle.kts
+          N=$(grep -m1 -oP 'versionName\s*=\s*"\K[^"]+' "$f")
+          C=$(grep -m1 -oP 'versionCode\s*=\s*\K[0-9]+' "$f")
+          echo "name=$N" >> "$GITHUB_OUTPUT"
+          echo "code=$C" >> "$GITHUB_OUTPUT"
+          echo "Текущая версия в репозитории: $N (сборка $C)"
+          echo "### Текущая версия: \`$N\` (сборка \`$C\`)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update version
+        env:
+          NAME: ${{ inputs.version_name }}
+          CODE: ${{ inputs.version_code }}
+          BUMP: ${{ inputs.bump_code }}
+          CUR_CODE: ${{ steps.cur.outputs.code }}
+        run: |
+          f=app/build.gradle.kts
+          if [ "$BUMP" = "true" ] && { [ -z "$CODE" ] || [ "$CODE" = "$CUR_CODE" ]; }; then CODE=$((CUR_CODE + 1)); fi
+          if [ -z "$NAME" ] && [ -z "$CODE" ]; then
+            echo "::error::Укажите версию и/или номер сборки (или включите +1 к номеру)"; exit 1
+          fi
+          if [ -n "$NAME" ]; then
+            [[ "$NAME" =~ ^[0-9A-Za-z.+_-]+$ ]] || { echo "::error::Недопустимая версия: $NAME"; exit 1; }
+            sed -i -E "s/^([[:space:]]*versionName[[:space:]]*=[[:space:]]*)\"[^\"]*\"/\1\"$NAME\"/" "$f"
+          fi
+          if [ -n "$CODE" ]; then
+            [[ "$CODE" =~ ^[0-9]+$ ]] || { echo "::error::Номер сборки должен быть целым числом: $CODE"; exit 1; }
+            sed -i -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)[0-9]+/\1$CODE/" "$f"
+          fi
+          grep -nE "versionName|versionCode" "$f"
+          N=$(grep -m1 -oP 'versionName\s*=\s*"\K[^"]+' "$f"); C=$(grep -m1 -oP 'versionCode\s*=\s*\K[0-9]+' "$f")
+          echo "### Стало: \`$N\` (сборка \`$C\`)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sync dialog defaults
+        env:
+          HAS_PAT: ${{ secrets.WORKFLOW_PAT != '' }}
+        run: |
+          if [ "$HAS_PAT" != "true" ]; then
+            echo "::notice::WORKFLOW_PAT не задан: значения в окне запуска не обновляются (версия в build.gradle.kts изменена)"; exit 0
+          fi
+          f=app/build.gradle.kts
+          N=$(grep -m1 -oP 'versionName\s*=\s*"\K[^"]+' "$f"); C=$(grep -m1 -oP 'versionCode\s*=\s*\K[0-9]+' "$f")
+          sed -i -E "s/default: \"[^\"]*\" # cur-name/default: \"$N\" # cur-name/; s/default: \"[^\"]*\" # cur-code/default: \"$C\" # cur-code/" .github/workflows/version.yml
+
+      - name: Commit and push
+        run: |
+          if git diff --quiet; then
+            echo "::notice::Значения уже такие же, коммитить нечего"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Версия: $(grep -m1 -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts), сборка $(grep -m1 -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts)"
+          git push

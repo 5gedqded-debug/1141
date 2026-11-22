@@ -1,0 +1,20 @@
+query fetchViewer {
+  viewer {
+    permissions { canDisableAdvertisement }
+    user {
+      id
+      slug
+      name
+      avatar { original { url } }
+      frame { original { url } }
+    }
+    userBookmarkCollections {
+      id
+      slug
+      name
+      entityType
+      system
+      preference { name }
+    }
+  }
+}

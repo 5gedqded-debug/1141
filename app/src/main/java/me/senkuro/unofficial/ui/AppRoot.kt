@@ -1,0 +1,519 @@
+package me.senkuro.unofficial.ui
+
+import android.net.Uri
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.MailOutline
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import me.senkuro.unofficial.BuildConfig
+import me.senkuro.unofficial.data.AppGraph
+import me.senkuro.unofficial.data.MangaItem
+import me.senkuro.unofficial.debugtools.DebugTools
+
+private object Routes {
+    const val HOME = "home"
+    const val LEVELS = "levels"
+    const val CATALOG = "catalog"
+    const val LIBRARY = "library"
+    const val DEBUG = "debug"
+    const val API_JOURNAL = "apijournal"
+    const val API_CONSOLE = "apiconsole"
+    const val SITE_VERSION = "siteversion"
+    const val LOGIN = "login"
+    const val SETTINGS = "settings"
+    const val NOTIFICATIONS = "notifications"
+    const val NOTIF_SETTINGS = "notification-settings"
+    const val PROFILE = "profile"
+    const val USER = "user/{slug}"
+    const val RANKS = "ranks"
+    const val SHORTS = "shorts"
+    const val CARD_HUB = "cardhub"
+    const val DECKS = "decks"
+    const val DECK_NEW = "decknew"
+    const val DECK = "deck/{slug}"
+    const val PACKS = "packs"
+    const val PACK = "pack/{slug}"
+    const val FORGE = "forge"
+    const val CONTEST = "contest"
+    const val SHOP = "shop"
+    const val HISTORY = "history/{userId}"
+    const val CONVERSATIONS = "conversations"
+    const val CHAT = "chat/{id}/{title}"
+    const val GUILDS = "guilds"
+    const val GUILD = "guild/{slug}"
+    const val CARDS = "cards"
+    const val CARD_CATALOG = "cardcatalog"
+    const val CARD = "card/{slug}"
+    const val CHARACTER = "character/{slug}"
+    const val TASKS = "tasks"
+    const val OFFERS = "offers"
+    const val SEARCH = "sitesearch"
+    const val POSTS = "posts"
+    const val POST = "post/{slug}"
+    const val FEED = "feed"
+    const val TEAMS = "teams"
+    const val TEAM = "team/{slug}"
+    const val PERSON = "person/{slug}"
+    const val MANGA = "manga/{id}"
+    const val READER = "reader/{mangaId}/{chapterId}?page={page}"
+
+    fun manga(id: String) = "manga/$id"
+    fun reader(mangaId: String, chapterId: String, page: Int = 1) = "reader/$mangaId/$chapterId?page=$page"
+}
+
+private class TopLevel(val route: String, val title: String, val icon: ImageVector)
+
+// Порядок: главная, каталог, закладки, уведомления, настройки.
+private val topLevel = listOf(
+    TopLevel(Routes.HOME, "Главная", Icons.Filled.Home),
+    TopLevel(Routes.CATALOG, "Каталог", CompassIcon),
+    TopLevel(Routes.LIBRARY, "Закладки", Icons.Filled.Star),
+    TopLevel(Routes.NOTIFICATIONS, "Уведы", Icons.Filled.Notifications),
+    TopLevel(Routes.CONVERSATIONS, "Личка", Icons.Filled.MailOutline),
+    TopLevel(Routes.SETTINGS, "Настройки", Icons.Filled.Settings),
+)
+
+@Composable
+fun AppRoot() {
+    DebugTools.CrashDialog()
+    DisclaimerDialog()
+    UpdateHost()
+    val nav = rememberNavController()
+    val entry by nav.currentBackStackEntryAsState()
+    val route = entry?.destination?.route
+    val appDark by AppGraph.themeDark.collectAsState()
+    val showBar = topLevel.any { it.route == route }
+
+    val openManga: (MangaItem) -> Unit = { AppGraph.rememberSlug(it.id, it.slug); nav.navigate(Routes.manga(it.id)) }
+    val navigateTop: (String) -> Unit = { target ->
+        // Главная — начальный экран и всегда лежит внизу стека: к ней просто возвращаемся.
+        // Через navigate(HOME) + restoreState система поднимала сохранённое состояние другой вкладки (закладки).
+        if (target == Routes.HOME && nav.popBackStack(Routes.HOME, inclusive = false)) {
+            // готово
+        } else {
+            nav.navigate(target) {
+                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
+
+    CompositionLocalProvider(LocalBottomInset provides 0.dp, LocalOnLogin provides { nav.navigate(Routes.LOGIN) }) {
+        Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0)) { padding ->
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .consumeWindowInsets(padding),
+            ) {
+                CompositionLocalProvider(
+                    LocalOpenUser provides { slug: String -> nav.navigate("user/" + Uri.encode(slug)) },
+                    LocalOpenLevels provides { nav.navigate(Routes.LEVELS) },
+                ) {
+                NavHost(
+                    navController = nav,
+                    startDestination = Routes.HOME,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                ) {
+                    composable(Routes.HOME) {
+                        UnofficialTheme(dark = appDark) {
+                            HomeScreen(
+                                onManga = openManga,
+                                onSearch = { nav.navigate(Routes.SEARCH) },
+                                onMore = { navigateTop(Routes.CATALOG) },
+                                onLogin = { nav.navigate(Routes.LOGIN) },
+                                onProfile = { nav.navigate(Routes.PROFILE) },
+                                onNotifications = { navigateTop(Routes.NOTIFICATIONS) },
+                                onTasks = { nav.navigate(Routes.TASKS) },
+                                onUser = { nav.navigate("user/" + Uri.encode(it)) },
+                            )
+                        }
+                    }
+                    composable(Routes.LEVELS) { UnofficialTheme(dark = appDark) { LevelsScreen(onBack = { nav.popBackStack() }) } }
+                    composable(Routes.CATALOG) { UnofficialTheme(dark = appDark) { CatalogScreen(onManga = openManga) } }
+                    composable(Routes.LIBRARY) {
+                        UnofficialTheme(dark = appDark) {
+                            LibraryScreen(
+                                onManga = openManga,
+                                onLogin = { nav.navigate(Routes.LOGIN) },
+                            )
+                        }
+                    }
+                    composable(Routes.NOTIFICATIONS) {
+                        UnofficialTheme(dark = appDark) {
+                            NotificationsScreen(
+                                onBack = { nav.popBackStack() },
+                                onManga = openManga,
+                                onChapter = { manga, chapterId -> nav.navigate(Routes.reader(manga.id, chapterId)) },
+                                onChapterAt = { manga, chapterId, page -> nav.navigate(Routes.reader(manga.id, chapterId, page)) },
+                                onPost = { slug -> nav.navigate("post/" + Uri.encode(slug)) },
+                                onUser = { slug -> nav.navigate("user/" + Uri.encode(slug)) },
+                                onSettings = { nav.navigate(Routes.NOTIF_SETTINGS) },
+                            )
+                        }
+                    }
+                    composable(Routes.NOTIF_SETTINGS) {
+                        UnofficialTheme(dark = appDark) { NotificationSettingsScreen(onBack = { nav.popBackStack() }) }
+                    }
+                    composable(Routes.PROFILE) {
+                        UnofficialTheme(dark = appDark) { ProfileScreen(onUser = { nav.navigate("user/" + Uri.encode(it)) }, onRanks = { nav.navigate(Routes.RANKS) }, onHistory = { nav.navigate("history/" + Uri.encode(it)) }, onBack = { nav.popBackStack() }, onOpenTasks = { nav.navigate(Routes.TASKS) }, onCards = { nav.navigate(Routes.CARDS) }, onTeams = { nav.navigate(Routes.TEAMS) }, onLibrary = { nav.navigate(Routes.LIBRARY) { launchSingleTop = true } }, onManga = openManga) }
+                    }
+                    composable(Routes.USER, arguments = listOf(navArgument("slug") { type = NavType.StringType })) { b ->
+                        UnofficialTheme(dark = appDark) {
+                            ProfileScreen(
+                                slug = b.arguments?.getString("slug"),
+                                onManga = openManga,
+                                onUser = { nav.navigate("user/" + Uri.encode(it)) },
+                                onRanks = { nav.navigate(Routes.RANKS) },
+                                onHistory = { nav.navigate("history/" + Uri.encode(it)) },
+                                onBack = { nav.popBackStack() },
+                            )
+                        }
+                    }
+                    composable(Routes.CARD_HUB) {
+                        UnofficialTheme(dark = appDark) {
+                            CardsHubScreen(
+                                onBack = { nav.popBackStack() },
+                                onMyCards = { nav.navigate(Routes.CARDS) },
+                                onCatalog = { nav.navigate(Routes.CARD_CATALOG) },
+                                onOffers = { nav.navigate(Routes.OFFERS) },
+                                onDecks = { nav.navigate(Routes.DECKS) },
+                                onPacks = { nav.navigate(Routes.PACKS) },
+                                onForge = { nav.navigate(Routes.FORGE) },
+                                onContest = { nav.navigate(Routes.CONTEST) },
+                            )
+                        }
+                    }
+                    composable(Routes.DECKS) {
+                        UnofficialTheme(dark = appDark) { DecksScreen(onBack = { nav.popBackStack() }, onDeck = { nav.navigate("deck/" + Uri.encode(it)) }, onCreate = { nav.navigate(Routes.DECK_NEW) }) }
+                    }
+                    composable(Routes.DECK_NEW) {
+                        UnofficialTheme(dark = appDark) {
+                            DeckCreateScreen(onBack = { nav.popBackStack() }, onCreated = { slug -> nav.popBackStack(); nav.navigate("deck/" + Uri.encode(slug)) })
+                        }
+                    }
+                    composable(Routes.DECK, arguments = listOf(navArgument("slug") { type = NavType.StringType })) { b ->
+                        UnofficialTheme(dark = appDark) { DeckScreen(slug = b.arguments?.getString("slug").orEmpty(), onBack = { nav.popBackStack() }, onCard = { nav.navigate("card/" + Uri.encode(it)) }) }
+                    }
+                    composable(Routes.PACKS) {
+                        UnofficialTheme(dark = appDark) { PacksScreen(onBack = { nav.popBackStack() }, onPack = { nav.navigate("pack/" + Uri.encode(it)) }) }
+                    }
+                    composable(Routes.PACK, arguments = listOf(navArgument("slug") { type = NavType.StringType })) { b ->
+                        UnofficialTheme(dark = appDark) { PackScreen(slug = b.arguments?.getString("slug").orEmpty(), onBack = { nav.popBackStack() }) }
+                    }
+                    composable(Routes.FORGE) { UnofficialTheme(dark = appDark) { ForgeScreen(onBack = { nav.popBackStack() }) } }
+                    composable(Routes.CONTEST) { UnofficialTheme(dark = appDark) { ContestScreen(onBack = { nav.popBackStack() }) } }
+                    composable(Routes.SHOP) { UnofficialTheme(dark = appDark) { ShopScreen(onBack = { nav.popBackStack() }) } }
+                    composable(Routes.SHORTS) {
+                        UnofficialTheme(dark = appDark) { ShortsScreen(onBack = { nav.popBackStack() }, onManga = openManga) }
+                    }
+                    composable(Routes.RANKS) {
+                        UnofficialTheme(dark = appDark) { RanksScreen(onBack = { nav.popBackStack() }, onUser = { nav.navigate("user/" + Uri.encode(it)) }) }
+                    }
+                    composable(Routes.HISTORY, arguments = listOf(navArgument("userId") { type = NavType.StringType })) { b ->
+                        UnofficialTheme(dark = appDark) { HistoryScreen(userId = b.arguments?.getString("userId").orEmpty(), onBack = { nav.popBackStack() }) }
+                    }
+                    composable(Routes.SETTINGS) {
+                        UnofficialTheme(dark = appDark) {
+                            SettingsScreen(
+                                onPosts = { nav.navigate(Routes.POSTS) },
+                                onCardHub = { nav.navigate(Routes.CARD_HUB) },
+                                onShop = { nav.navigate(Routes.SHOP) },
+                                onShorts = { nav.navigate(Routes.SHORTS) },
+                                onJournal = if (BuildConfig.DEBUG_TOOLS) ({ nav.navigate(Routes.API_JOURNAL) }) else null,
+                                onCapture = if (BuildConfig.DEBUG_TOOLS) ({ nav.navigate(Routes.DEBUG) }) else null,
+                                onSiteVersion = if (BuildConfig.DEBUG_TOOLS) ({ nav.navigate(Routes.SITE_VERSION) }) else null,
+                                onConsole = if (BuildConfig.DEBUG_TOOLS) ({ nav.navigate(Routes.API_CONSOLE) }) else null,
+                            )
+                        }
+                    }
+                    composable(Routes.CONVERSATIONS) {
+                        UnofficialTheme(dark = appDark) {
+                            ConversationsScreen(
+                                onBack = { nav.popBackStack() },
+                                onOpen = { id, title -> nav.navigate("chat/" + Uri.encode(id) + "/" + Uri.encode(title)) },
+                            )
+                        }
+                    }
+                    composable(
+                        Routes.CHAT,
+                        arguments = listOf(navArgument("id") { type = NavType.StringType }, navArgument("title") { type = NavType.StringType }),
+                    ) { b ->
+                        UnofficialTheme(dark = appDark) {
+                            ChatScreen(
+                                conversationId = b.arguments?.getString("id").orEmpty(),
+                                title = b.arguments?.getString("title").orEmpty(),
+                                onBack = { nav.popBackStack() },
+                            )
+                        }
+                    }
+                    composable(Routes.GUILDS) {
+                        UnofficialTheme(dark = appDark) {
+                            GuildsScreen(onBack = { nav.popBackStack() }, onOpen = { nav.navigate("guild/" + Uri.encode(it)) })
+                        }
+                    }
+                    composable(Routes.GUILD, arguments = listOf(navArgument("slug") { type = NavType.StringType })) { b ->
+                        UnofficialTheme(dark = appDark) {
+                            GuildScreen(slug = b.arguments?.getString("slug").orEmpty(), onBack = { nav.popBackStack() })
+                        }
+                    }
+                    composable(Routes.CARDS) {
+                        UnofficialTheme(dark = appDark) { CardsScreen(onBack = { nav.popBackStack() }, onCard = { nav.navigate("card/" + Uri.encode(it)) }) }
+                    }
+                    composable(Routes.CARD_CATALOG) {
+                        UnofficialTheme(dark = appDark) { CardCatalogScreen(onBack = { nav.popBackStack() }, onCard = { nav.navigate("card/" + Uri.encode(it)) }) }
+                    }
+                    composable(Routes.CARD, arguments = listOf(navArgument("slug") { type = NavType.StringType })) { b ->
+                        UnofficialTheme(dark = appDark) {
+                            CardScreen(
+                                slug = b.arguments?.getString("slug").orEmpty(),
+                                onBack = { nav.popBackStack() },
+                                onCharacter = { nav.navigate("character/" + Uri.encode(it)) },
+                                onManga = { nav.navigate(Routes.manga(it)) },
+                            )
+                        }
+                    }
+                    composable(Routes.CHARACTER, arguments = listOf(navArgument("slug") { type = NavType.StringType })) { b ->
+                        UnofficialTheme(dark = appDark) {
+                            CharacterScreen(
+                                slug = b.arguments?.getString("slug").orEmpty(),
+                                onBack = { nav.popBackStack() },
+                                onManga = openManga,
+                                onCard = { nav.navigate("card/" + Uri.encode(it)) },
+                            )
+                        }
+                    }
+                    composable(Routes.POSTS) {
+                        UnofficialTheme(dark = appDark) { PostsScreen(onBack = { nav.popBackStack() }, onOpen = { nav.navigate("post/" + Uri.encode(it)) }) }
+                    }
+                    composable(Routes.POST, arguments = listOf(navArgument("slug") { type = NavType.StringType })) { b ->
+                        UnofficialTheme(dark = appDark) { PostScreen(slug = b.arguments?.getString("slug").orEmpty(), onBack = { nav.popBackStack() }) }
+                    }
+                    composable(Routes.FEED) {
+                        UnofficialTheme(dark = appDark) { FeedScreen(onBack = { nav.popBackStack() }, onManga = openManga) }
+                    }
+                    composable(Routes.SEARCH) {
+                        UnofficialTheme(dark = appDark) {
+                            SiteSearchScreen(
+                                onBack = { nav.popBackStack() },
+                                onManga = { nav.navigate(Routes.manga(it)) },
+                                onTeam = { nav.navigate("team/" + Uri.encode(it)) },
+                                onGuild = { nav.navigate("guild/" + Uri.encode(it)) },
+                                onPerson = { nav.navigate("person/" + Uri.encode(it)) },
+                                onCharacter = { nav.navigate("character/" + Uri.encode(it)) },
+                            )
+                        }
+                    }
+                    composable(Routes.TEAMS) {
+                        UnofficialTheme(dark = appDark) { TeamsScreen(onBack = { nav.popBackStack() }, onOpen = { nav.navigate("team/" + Uri.encode(it)) }) }
+                    }
+                    composable(Routes.TEAM, arguments = listOf(navArgument("slug") { type = NavType.StringType })) { b ->
+                        UnofficialTheme(dark = appDark) { TeamScreen(slug = b.arguments?.getString("slug").orEmpty(), onBack = { nav.popBackStack() }) }
+                    }
+                    composable(Routes.PERSON, arguments = listOf(navArgument("slug") { type = NavType.StringType })) { b ->
+                        UnofficialTheme(dark = appDark) {
+                            PersonScreen(slug = b.arguments?.getString("slug").orEmpty(), onBack = { nav.popBackStack() }, onManga = openManga)
+                        }
+                    }
+                    composable(Routes.OFFERS) {
+                        UnofficialTheme(dark = appDark) { OffersScreen(onBack = { nav.popBackStack() }, onCard = { nav.navigate("card/" + Uri.encode(it)) }) }
+                    }
+                    composable(Routes.TASKS) { UnofficialTheme(dark = appDark) { TasksScreen(onBack = { nav.popBackStack() }) } }
+                    composable(Routes.LOGIN) {
+                        UnofficialTheme(dark = appDark) {
+                            LoginScreen(onBack = { nav.popBackStack() }, onDone = { nav.popBackStack() })
+                        }
+                    }
+                    composable(Routes.SITE_VERSION) {
+                        UnofficialTheme(dark = appDark) { DebugTools.SiteVersionScreen(onBack = { nav.popBackStack() }) }
+                    }
+                    composable(Routes.API_CONSOLE) {
+                        UnofficialTheme(dark = appDark) { ApiConsoleScreen(onBack = { nav.popBackStack() }) }
+                    }
+                    composable(Routes.API_JOURNAL) {
+                        UnofficialTheme(dark = appDark) { DebugTools.JournalScreen(onBack = { nav.popBackStack() }) }
+                    }
+                    composable(Routes.DEBUG) {
+                        UnofficialTheme(dark = appDark) { DebugTools.Screen(onBack = { nav.popBackStack() }) }
+                    }
+
+                    composable(
+                        route = Routes.MANGA,
+                        arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                    ) { backStack ->
+                        val id = backStack.arguments?.getString("id").orEmpty()
+                        UnofficialTheme(dark = true) {
+                            DetailsScreen(
+                                mangaId = id,
+                                onBack = { nav.popBackStack() },
+                                onRead = { chapter -> nav.navigate(Routes.reader(id, chapter.id)) },
+                                onReadAt = { chapter, page -> nav.navigate(Routes.reader(id, chapter.id, page)) },
+                                onLogin = { nav.navigate(Routes.LOGIN) },
+                                onOpenManga = openManga,
+                                onOpenCharacter = { nav.navigate("character/" + Uri.encode(it)) },
+                                onOpenPerson = { nav.navigate("person/" + Uri.encode(it)) },
+                                onOpenCard = { nav.navigate("card/" + Uri.encode(it)) },
+                                onOpenLabel = { AppGraph.pendingCatalogLabel.value = it; navigateTop(Routes.CATALOG) },
+                            )
+                        }
+                    }
+
+                    composable(
+                        route = Routes.READER,
+                        arguments = listOf(
+                            navArgument("mangaId") { type = NavType.StringType },
+                            navArgument("chapterId") { type = NavType.StringType },
+                            navArgument("page") { type = NavType.IntType; defaultValue = 1 },
+                        ),
+                    ) { backStack ->
+                        val startPage = backStack.arguments?.getInt("page") ?: 1
+                        val mangaId = backStack.arguments?.getString("mangaId").orEmpty()
+                        val chapterId = backStack.arguments?.getString("chapterId").orEmpty()
+                        UnofficialTheme(dark = true) {
+                            ReaderScreen(
+                                mangaId = mangaId,
+                                chapterId = chapterId,
+                                startPage = startPage,
+                                onBack = { nav.popBackStack() },
+                                onToTitle = {
+                                    // всегда страница именно этого тайтла: если она прямо под читалкой — возвращаемся, иначе открываем
+                                    val below = nav.previousBackStackEntry
+                                    if (below?.destination?.route == Routes.MANGA && below.arguments?.getString("id") == mangaId) {
+                                        nav.popBackStack()
+                                    } else {
+                                        nav.navigate(Routes.manga(mangaId)) { popUpTo(Routes.READER) { inclusive = true } }
+                                    }
+                                },
+                                onOpenChapter = { chapter ->
+                                    nav.navigate(Routes.reader(mangaId, chapter.id)) {
+                                        popUpTo(Routes.READER) { inclusive = true }
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+                }
+
+                if (showBar) BottomBar(route = route, onSelect = navigateTop)
+            }
+        }
+    }
+}
+
+/** Нижняя панель в стиле кита: белый фон, линия сверху #E0E0E0, значок и подпись, выбранный пункт тёмный с зелёной чертой. */
+@Composable
+private fun BottomBar(route: String?, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
+    val unread by AppGraph.unread.collectAsState()
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(0.8.dp)
+                .background(MaterialTheme.colorScheme.outline),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            topLevel.forEach { item ->
+                val selected = route == item.route
+                val tint = if (selected) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable { onSelect(item.route) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Box {
+                        Icon(item.icon, contentDescription = item.title, tint = tint, modifier = Modifier.size(22.dp))
+                        if (item.route == Routes.NOTIFICATIONS && unread > 0) {
+                            Box(
+                                Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 8.dp, y = (-4).dp)
+                                    .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                                    .background(AppColors.Accent, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 4.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    if (unread > 99) "99+" else unread.toString(),
+                                    color = Color.Black, fontSize = 10.sp, lineHeight = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                    maxLines = 1, softWrap = false,
+                                )
+                            }
+                        }
+                    }
+                    Text(item.title, color = tint, fontSize = 10.sp, maxLines = 1, softWrap = false)
+                    Box(
+                        Modifier
+                            .padding(top = 2.dp)
+                            .width(16.dp)
+                            .height(2.dp)
+                            .background(if (selected) AppColors.Accent else Color.Transparent),
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.navigationBarsPadding())
+    }
+}
