@@ -438,6 +438,7 @@ fun AppRoot() {
                                         popUpTo(Routes.READER) { inclusive = true }
                                     }
                                 },
+                                onOpenCard = { nav.navigate("card/" + Uri.encode(it)) },
                             )
                         }
                     }

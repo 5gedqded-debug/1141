@@ -54,7 +54,9 @@ import coil3.request.allowHardware
 import coil3.request.bitmapConfig
 import kotlinx.coroutines.launch
 import me.senkuro.unofficial.data.AppGraph
+import me.senkuro.unofficial.data.CardDrop
 import me.senkuro.unofficial.data.Chapter
+import androidx.compose.foundation.layout.offset
 
 /** Вертикальный ридер: страницы идут сплошной лентой, тап по экрану показывает/прячет панели. */
 @Composable
@@ -65,6 +67,7 @@ fun ReaderScreen(
     onBack: () -> Unit,
     onToTitle: () -> Unit = onBack,
     onOpenChapter: (Chapter) -> Unit,
+    onOpenCard: (String) -> Unit = {},
     vm: ReaderViewModel = viewModel(key = "reader-$mangaId-$chapterId"),
 ) {
     LaunchedEffect(mangaId, chapterId) { vm.load(mangaId, chapterId) }
@@ -146,6 +149,8 @@ fun ReaderScreen(
                                 sent = true
                                 try { AppGraph.repository.readerEvent(mangaId, data.chapter, "COMPLETED_READING") }
                                 catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
+                                // как на сайте: дочитали главу — через 1,5 с проверяем, выпала ли карточка
+                                AppGraph.cardDrop.check()
                             }
                         }
                 }
@@ -407,6 +412,30 @@ fun ReaderScreen(
                 }
             }
         }
+
+        // выпавшая карточка: рубашка у правого края (как на сайте), по тапу — окно с результатом
+        val canClaimDrop by AppGraph.cardDrop.canClaim.collectAsState()
+        val loggedIn by AppGraph.auth.token.collectAsState()
+        var dropResult by remember { mutableStateOf<CardDrop?>(null) }
+        if (canClaimDrop && loggedIn != null) {
+            CardDropTrigger(
+                onClick = {
+                    scope.launch {
+                        try {
+                            AppGraph.cardDrop.claim()?.let { dropResult = it }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(ctx, e.msg(), android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 42.dp, y = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.8f).dp),
+            )
+        }
+        dropResult?.let { CardDropDialog(it, onClose = { dropResult = null }, onOpenCard = onOpenCard) }
     }
 }
 

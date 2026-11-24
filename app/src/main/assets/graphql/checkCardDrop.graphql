@@ -1,0 +1,3 @@
+mutation checkCardDrop($input: CheckCardDropInput!) {
+  checkCardDrop(input: $input) { canClaim }
+}

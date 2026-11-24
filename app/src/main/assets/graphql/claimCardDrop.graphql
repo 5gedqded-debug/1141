@@ -1,0 +1,9 @@
+mutation claimCardDrop($input: ClaimCardDropInput!) {
+  claimCardDrop(input: $input) {
+    dropProbability
+    preview {
+      cardId slug modifier quantity shard
+      card { id slug titles { lang content } rank explicit animated image { original { url } } }
+    }
+  }
+}

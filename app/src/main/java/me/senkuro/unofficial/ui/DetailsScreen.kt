@@ -246,6 +246,13 @@ private fun DetailsContent(data: DetailsData, readIds: Set<String>, onRead: (Cha
     val bookmarkChapter = remember(branch, bookmarkNumber) {
         bookmarkNumber?.let { num -> branch?.chapters.orEmpty().firstOrNull { it.number == num } }
     }
+    // Главы строго до закладки считаются прочитанными автоматически (закладка = место, где остановился пользователь).
+    // Номер в закладке сайта — порядковый номер главы в списке ветки (дробные 5.6, 5.7 считаются отдельно, с начала),
+    // а не номер самой главы, поэтому сравниваем позицию в списке, а не chapter.number.
+    val readByBookmark = remember(branch, bookmarkNumber) {
+        val n = bookmarkNumber?.toDoubleOrNull()
+        if (n == null) emptySet<String>() else branch?.chapters.orEmpty().filterIndexed { index, _ -> index + 1 < n }.map { it.id }.toSet()
+    }
     val continueFrom = remember(branch, readIds, bookmarkChapter) {
         bookmarkChapter ?: run {
             val list = branch?.chapters.orEmpty()
@@ -309,12 +316,23 @@ private fun DetailsContent(data: DetailsData, readIds: Set<String>, onRead: (Cha
 
         if (details.labels.isNotEmpty()) {
             item(key = "labels") {
+                val collapsedLimit = 5
+                var labelsExpanded by rememberSaveable { mutableStateOf(false) }
+                val collapsible = details.labels.size > collapsedLimit
+                val shown = if (collapsible && !labelsExpanded) details.labels.take(collapsedLimit) else details.labels
                 FlowRow(
                     modifier = Modifier.padding(horizontal = 21.dp, vertical = 2.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    details.labels.forEach { OutlineChip(it, selected = false, onClick = { onOpenLabel(it) }) }
+                    shown.forEach { OutlineChip(it, selected = false, onClick = { onOpenLabel(it) }) }
+                    if (collapsible) {
+                        OutlineChip(
+                            text = if (labelsExpanded) "Свернуть" else "Ещё ${details.labels.size - collapsedLimit}",
+                            selected = false,
+                            onClick = { labelsExpanded = !labelsExpanded },
+                        )
+                    }
                 }
             }
         }
@@ -466,7 +484,7 @@ private fun DetailsContent(data: DetailsData, readIds: Set<String>, onRead: (Cha
             ChapterRow(
                 chapter = chapter,
                 cover = details.item.cover,
-                read = chapter.id in readIds,
+                read = chapter.id in readIds || chapter.id in readByBookmark,
                 onClick = { onRead(chapter) },
             )
         }
