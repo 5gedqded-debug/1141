@@ -246,6 +246,8 @@ private fun DetailsContent(data: DetailsData, readIds: Set<String>, onRead: (Cha
     val bookmarkChapter = remember(branch, bookmarkNumber) {
         bookmarkNumber?.let { num -> branch?.chapters.orEmpty().firstOrNull { it.number == num } }
     }
+    // Главы строго до закладки считаются прочитанными автоматически (закладка = место, где остановился пользователь).
+    val bookmarkValue = remember(bookmarkNumber) { bookmarkNumber?.toDoubleOrNull() }
     val continueFrom = remember(branch, readIds, bookmarkChapter) {
         bookmarkChapter ?: run {
             val list = branch?.chapters.orEmpty()
@@ -477,7 +479,8 @@ private fun DetailsContent(data: DetailsData, readIds: Set<String>, onRead: (Cha
             ChapterRow(
                 chapter = chapter,
                 cover = details.item.cover,
-                read = chapter.id in readIds,
+                read = chapter.id in readIds ||
+                    (bookmarkValue != null && chapter.number.toDoubleOrNull()?.let { it < bookmarkValue } == true),
                 onClick = { onRead(chapter) },
             )
         }
