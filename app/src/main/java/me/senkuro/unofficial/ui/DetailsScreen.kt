@@ -309,12 +309,23 @@ private fun DetailsContent(data: DetailsData, readIds: Set<String>, onRead: (Cha
 
         if (details.labels.isNotEmpty()) {
             item(key = "labels") {
+                val collapsedLimit = 5
+                var labelsExpanded by rememberSaveable { mutableStateOf(false) }
+                val collapsible = details.labels.size > collapsedLimit
+                val shown = if (collapsible && !labelsExpanded) details.labels.take(collapsedLimit) else details.labels
                 FlowRow(
                     modifier = Modifier.padding(horizontal = 21.dp, vertical = 2.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    details.labels.forEach { OutlineChip(it, selected = false, onClick = { onOpenLabel(it) }) }
+                    shown.forEach { OutlineChip(it, selected = false, onClick = { onOpenLabel(it) }) }
+                    if (collapsible) {
+                        OutlineChip(
+                            text = if (labelsExpanded) "Свернуть" else "Ещё ${details.labels.size - collapsedLimit}",
+                            selected = false,
+                            onClick = { labelsExpanded = !labelsExpanded },
+                        )
+                    }
                 }
             }
         }
