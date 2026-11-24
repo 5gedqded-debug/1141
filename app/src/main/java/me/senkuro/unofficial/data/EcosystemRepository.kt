@@ -66,7 +66,17 @@ import kotlinx.serialization.json.put
 @Serializable class ECollectibleConn(val edges: List<ECollectibleEdge> = emptyList(), val pageInfo: PageInfoDto = PageInfoDto())
 @Serializable class ECollectiblesResponse(val collectibles: ECollectibleConn = ECollectibleConn())
 
+// Выпадение карточки в читалке (checkCardDrop / claimCardDrop, как на сайте)
+@Serializable class ECardDropCheck(val canClaim: Boolean = false)
+@Serializable class ECardDropCheckResponse(val checkCardDrop: ECardDropCheck? = null)
+@Serializable class ECardDropPreview(val cardId: String? = null, val slug: String = "", val modifier: JsonElement? = null, val quantity: Int? = null, val shard: Boolean = false, val card: ECard? = null)
+@Serializable class ECardDropClaim(val dropProbability: JsonElement? = null, val preview: ECardDropPreview? = null)
+@Serializable class ECardDropClaimResponse(val claimCardDrop: ECardDropClaim? = null)
+
 // ---- Domain
+
+/** Выпавшая в читалке карточка: [probability] — уже отформатированный шанс (null — не показывать), [shard] — осколок вместо карты. */
+data class CardDrop(val slug: String, val title: String, val rank: String?, val image: String?, val quantity: Int, val shard: Boolean, val probability: String?)
 
 /** Карта пользователя с «сырым» модификатором (в кузницу/колоду он уходит без изменений). */
 data class OwnedCard(val cardId: String, val slug: String, val title: String, val rank: String?, val image: String?, val quantity: Int, val modifier: JsonElement, val locked: Boolean) {
@@ -108,6 +118,39 @@ class EcosystemRepository(private val api: SenkuroApi) {
 
     private suspend fun mutate(name: String, input: JsonObject) {
         api.execute(name, name, buildJsonObject { put("input", input) }, JsonElement.serializer())
+    }
+
+    // ---- выпадение карточки в читалке
+
+    /** Есть ли у пользователя выпавшая карточка, которую можно забрать (мутация checkCardDrop, как на сайте). */
+    suspend fun cardDropCheck(): Boolean =
+        api.execute("checkCardDrop", "checkCardDrop", buildJsonObject { put("input", buildJsonObject {}) }, ECardDropCheckResponse.serializer())
+            .checkCardDrop?.canClaim == true
+
+    /** Забирает выпавшую карточку (claimCardDrop). Ошибку сервера отдаёт исключением — текст показывается пользователю. */
+    suspend fun cardDropClaim(): CardDrop? {
+        val r = api.execute("claimCardDrop", "claimCardDrop", buildJsonObject { put("input", buildJsonObject {}) }, ECardDropClaimResponse.serializer())
+            .claimCardDrop ?: return null
+        val p = r.preview ?: return null
+        val c = p.card
+        return CardDrop(
+            slug = c?.slug?.ifBlank { null } ?: p.slug,
+            title = c?.titles.pick() ?: "Карточка",
+            rank = c?.rank.s(),
+            image = c?.image?.original?.url,
+            quantity = p.quantity ?: 1,
+            shard = p.shard,
+            probability = formatDropProbability(r.dropProbability.s()),
+        )
+    }
+
+    /** Как `toLocaleString('en-US', {maximumFractionDigits: 12})` на сайте; ноль и пустое значение — не показываются. */
+    private fun formatDropProbability(raw: String?): String? {
+        val value = raw?.toBigDecimalOrNull() ?: return null
+        if (value.signum() == 0) return null
+        val rounded = value.setScale(12, java.math.RoundingMode.HALF_EVEN).stripTrailingZeros()
+        val plain = rounded.toPlainString()
+        return if (plain == "0") null else plain
     }
 
     // ---- мои карты (для выбора в колоду и кузницу)
