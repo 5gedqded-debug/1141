@@ -2,6 +2,7 @@ package me.senkuro.unofficial.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +43,7 @@ val LocalBottomInset = compositionLocalOf<Dp> { 0.dp }
 val LocalOnLogin = compositionLocalOf<() -> Unit> { {} }
 
 /** Постер 2:3 со скруглением 4 и подписями слева под ним: название 13sp и статус серым 11sp (как в ките). */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun MangaCard(
     item: MangaItem,
@@ -129,8 +131,11 @@ fun MangaCard(
             color = MaterialTheme.colorScheme.onBackground,
             fontSize = if (compact) 10.sp else 13.sp,
             lineHeight = if (compact) 12.sp else 16.sp,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
+            // В компактной сетке (5 колонок) название в одну строку; если не влезает — бегущая строка.
+            maxLines = if (compact) 1 else 2,
+            softWrap = !compact,
+            overflow = if (compact) TextOverflow.Clip else TextOverflow.Ellipsis,
+            modifier = if (compact) Modifier.basicMarquee(iterations = Int.MAX_VALUE) else Modifier,
         )
         item.status?.let {
             Text(it.uppercase(), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1)
