@@ -153,7 +153,7 @@ fun CatalogScreen(onManga: (MangaItem) -> Unit, vm: CatalogViewModel = viewModel
             Box(Modifier.weight(1f)) {
                 LazyVerticalGrid(
                     state = gridState,
-                    columns = GridCells.Fixed(5),
+                    columns = GridCells.Fixed(4),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         start = 8.dp,

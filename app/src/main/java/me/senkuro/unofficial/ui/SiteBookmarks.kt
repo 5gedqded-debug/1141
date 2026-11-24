@@ -158,7 +158,7 @@ fun SiteBookmarksTab(onManga: (MangaItem) -> Unit, onLogin: () -> Unit, vm: Site
                 vm.items.isEmpty() && vm.loading -> LoadingBox()
                 vm.items.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Здесь пока пусто") }
                 else -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(5),
+                    columns = GridCells.Fixed(4),
                     contentPadding = PaddingValues(8.dp, 12.dp, 8.dp, 12.dp + LocalBottomInset.current),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
