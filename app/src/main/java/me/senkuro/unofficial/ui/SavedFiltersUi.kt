@@ -7,6 +7,8 @@ import android.content.Intent
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -81,6 +83,7 @@ fun SaveFilterNameDialog(filters: CatalogFilters, onDone: () -> Unit) {
 }
 
 /** Управление наборами: применить, переименовать, перезаписать, удалить, порядок, импорт и экспорт. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SavedFiltersDialog(current: CatalogFilters, onApply: (CatalogFilters) -> Unit, onDismiss: () -> Unit) {
     val ctx = LocalContext.current
@@ -111,7 +114,8 @@ fun SavedFiltersDialog(current: CatalogFilters, onApply: (CatalogFilters) -> Uni
                 saved.forEachIndexed { i, s ->
                     Column(Modifier.fillMaxWidth()) {
                         Text("${s.name} · ${s.filters.activeCount} фильтр.", style = MaterialTheme.typography.titleSmall)
-                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        // FlowRow, а не горизонтальная прокрутка: иначе «←», «→» и «Удалить» уезжают за край окна и их не видно
+                        FlowRow(Modifier.fillMaxWidth()) {
                             TextButton(onClick = { onApply(s.filters); onDismiss() }) { Text("Применить") }
                             TextButton(onClick = { rename = s; renameText = s.name }) { Text("Имя") }
                             TextButton(enabled = current.activeCount > 0, onClick = { replace(s, s.copy(filters = current)) }) { Text("Перезаписать") }
