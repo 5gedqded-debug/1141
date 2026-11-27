@@ -87,6 +87,7 @@ fun SavedFiltersDialog(current: CatalogFilters, onApply: (CatalogFilters) -> Uni
     val saved by AppGraph.savedFilters.collectAsState()
     var rename by remember { mutableStateOf<SavedFilter?>(null) }
     var renameText by remember { mutableStateOf("") }
+    var delete by remember { mutableStateOf<SavedFilter?>(null) }
     var importOpen by remember { mutableStateOf(false) }
     var importText by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
@@ -116,7 +117,7 @@ fun SavedFiltersDialog(current: CatalogFilters, onApply: (CatalogFilters) -> Uni
                             TextButton(enabled = current.activeCount > 0, onClick = { replace(s, s.copy(filters = current)) }) { Text("Перезаписать") }
                             TextButton(onClick = { move(i, -1) }, enabled = i > 0) { Text("←") }
                             TextButton(onClick = { move(i, 1) }, enabled = i < saved.lastIndex) { Text("→") }
-                            TextButton(onClick = { replace(s, null) }) { Text("Удалить", color = MaterialTheme.colorScheme.error) }
+                            TextButton(onClick = { delete = s }) { Text("Удалить", color = MaterialTheme.colorScheme.error) }
                         }
                     }
                 }
@@ -137,6 +138,18 @@ fun SavedFiltersDialog(current: CatalogFilters, onApply: (CatalogFilters) -> Uni
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
     )
+
+    delete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { delete = null },
+            title = { Text("Удалить набор?") },
+            text = { Text("Набор «${target.name}» будет удалён без возможности восстановления.") },
+            confirmButton = {
+                TextButton(onClick = { replace(target, null); delete = null }) { Text("Удалить", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { delete = null }) { Text("Отмена") } },
+        )
+    }
 
     rename?.let { target ->
         AlertDialog(
