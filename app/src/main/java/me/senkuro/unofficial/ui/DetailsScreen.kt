@@ -476,7 +476,8 @@ private fun DetailsContent(data: DetailsData, readIds: Set<String>, onRead: (Cha
             }
         }
 
-        if (tab == TitleTab.CHAPTERS && chaptersDescending.isNotEmpty()) {
+        // Реклама остаётся и когда главы недоступны (заглушка с инопланетянами) — как на сайте
+        if (tab == TitleTab.CHAPTERS && (chaptersDescending.isNotEmpty() || data.restricted)) {
             item(key = "ad-manga-chapters") { YandexAdBlock(AdPositions.MANGA_CHAPTERS) }
         }
 
