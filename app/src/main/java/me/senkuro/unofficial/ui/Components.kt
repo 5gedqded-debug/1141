@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -198,9 +199,14 @@ fun LoadingBox(modifier: Modifier = Modifier) {
 
 /** Заглушка для удалённого/скрытого тайтла. */
 @Composable
-fun AlienPlaceholder(modifier: Modifier = Modifier, color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+fun AlienPlaceholder(
+    modifier: Modifier = Modifier,
+    color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    /** Содержимое под текстом на всю ширину (например, рекламный блок). */
+    below: (@Composable () -> Unit)? = null,
+) {
     Column(
-        modifier = modifier.fillMaxSize().padding(horizontal = 32.dp),
+        modifier = modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -210,8 +216,12 @@ fun AlienPlaceholder(modifier: Modifier = Modifier, color: androidx.compose.ui.g
             color = color,
             fontSize = 15.sp,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 12.dp),
+            modifier = Modifier.padding(start = 32.dp, top = 12.dp, end = 32.dp),
         )
+        below?.let {
+            Spacer(Modifier.height(24.dp))
+            it()
+        }
     }
 }
 
