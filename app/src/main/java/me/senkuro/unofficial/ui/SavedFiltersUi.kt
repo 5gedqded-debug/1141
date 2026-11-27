@@ -12,6 +12,23 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -82,8 +99,23 @@ fun SaveFilterNameDialog(filters: CatalogFilters, onDone: () -> Unit) {
     )
 }
 
+/** Иконка-кнопка с подсказкой: показывается при наведении и при долгом нажатии без клика. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun IconTip(icon: ImageVector, label: String, enabled: Boolean = true, tint: Color = Color.Unspecified, onClick: () -> Unit) {
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(label) } },
+        state = rememberTooltipState(),
+    ) {
+        IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(40.dp)) {
+            Icon(icon, contentDescription = label, tint = if (tint == Color.Unspecified) LocalContentColor.current else tint)
+        }
+    }
+}
+
 /** Управление наборами: применить, переименовать, перезаписать, удалить, порядок, импорт и экспорт. */
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun SavedFiltersDialog(current: CatalogFilters, onApply: (CatalogFilters) -> Unit, onDismiss: () -> Unit) {
     val ctx = LocalContext.current
@@ -114,14 +146,14 @@ fun SavedFiltersDialog(current: CatalogFilters, onApply: (CatalogFilters) -> Uni
                 saved.forEachIndexed { i, s ->
                     Column(Modifier.fillMaxWidth()) {
                         Text("${s.name} · ${s.filters.activeCount} фильтр.", style = MaterialTheme.typography.titleSmall)
-                        // FlowRow, а не горизонтальная прокрутка: иначе «←», «→» и «Удалить» уезжают за край окна и их не видно
+                        // FlowRow, а не горизонтальная прокрутка: иначе кнопки уезжают за край окна и их не видно
                         FlowRow(Modifier.fillMaxWidth()) {
-                            TextButton(onClick = { onApply(s.filters); onDismiss() }) { Text("Применить") }
-                            TextButton(onClick = { rename = s; renameText = s.name }) { Text("Имя") }
-                            TextButton(enabled = current.activeCount > 0, onClick = { replace(s, s.copy(filters = current)) }) { Text("Перезаписать") }
-                            TextButton(onClick = { move(i, -1) }, enabled = i > 0) { Text("←") }
-                            TextButton(onClick = { move(i, 1) }, enabled = i < saved.lastIndex) { Text("→") }
-                            TextButton(onClick = { delete = s }) { Text("Удалить", color = MaterialTheme.colorScheme.error) }
+                            IconTip(Icons.Filled.Check, "Применить набор") { onApply(s.filters); onDismiss() }
+                            IconTip(Icons.Filled.Edit, "Переименовать") { rename = s; renameText = s.name }
+                            IconTip(Icons.Filled.Refresh, "Перезаписать текущими фильтрами", enabled = current.activeCount > 0) { replace(s, s.copy(filters = current)) }
+                            IconTip(Icons.AutoMirrored.Filled.ArrowBack, "Сдвинуть влево", enabled = i > 0) { move(i, -1) }
+                            IconTip(Icons.AutoMirrored.Filled.ArrowForward, "Сдвинуть вправо", enabled = i < saved.lastIndex) { move(i, 1) }
+                            IconTip(Icons.Filled.Delete, "Удалить набор", tint = MaterialTheme.colorScheme.error) { delete = s }
                         }
                     }
                 }
