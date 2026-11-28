@@ -6,16 +6,24 @@ import android.net.Uri
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
@@ -28,6 +36,30 @@ object AdPositions {
     const val ANIME_EPISODES = "R-A-20309842-4"
     const val MANGA_CHAPTERS = "R-A-20309842-5"
     const val MANGA_VERTICAL = "R-A-20309842-6"
+}
+
+private const val AD_DISCLAIMER =
+    "Вся реклама в приложении принадлежит сайту Senkuro. Само приложение не содержит ни одного собственного рекламного баннера."
+
+/** Подпись «Реклама» над баннером; по нажатию или долгому удержанию показывает, чья это реклама. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AdLabel(modifier: Modifier = Modifier) {
+    val tooltip = rememberTooltipState()
+    val scope = rememberCoroutineScope()
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(AD_DISCLAIMER) } },
+        state = tooltip,
+        modifier = modifier,
+    ) {
+        Text(
+            "Реклама",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.clickable { scope.launch { tooltip.show() } }.padding(vertical = 4.dp, horizontal = 2.dp),
+        )
+    }
 }
 
 /** Yandex-блок высотой 250dp — так же, как на сайте (YandexAd.vue: render({renderTo, blockId, darkTheme})). */
@@ -49,7 +81,7 @@ fun YandexAdBlock(blockId: String, modifier: Modifier = Modifier) {
         """.trimIndent()
     }
     Column(modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Text("Реклама", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AdLabel()
         AndroidView(
             modifier = Modifier.fillMaxWidth().height(250.dp).padding(top = 2.dp),
             factory = { ctx ->

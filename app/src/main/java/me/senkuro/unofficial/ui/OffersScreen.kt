@@ -138,7 +138,7 @@ fun AdStrip() {
         try { AppGraph.offers.viewAd(a.id) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { }
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Text("Реклама", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AdLabel()
         AsyncImage(
             model = a.image, contentDescription = "Реклама", contentScale = ContentScale.Crop,
             modifier = Modifier
